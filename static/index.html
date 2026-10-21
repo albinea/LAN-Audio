@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LAN Audio</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+           background: #10131a; color: #f2f4f8; }
+    main { width: min(90vw, 430px); padding: 24px; border: 1px solid #343b49;
+           border-radius: 20px; background: #191e28; box-sizing: border-box; }
+    h1 { margin-top: 0; }
+    p { color: #bdc5d4; line-height: 1.5; }
+    button { width: 100%; padding: 14px; margin-top: 10px; border: 0;
+             border-radius: 12px; font-size: 1rem; font-weight: 700; cursor: pointer; }
+    #start { background: #8bd5ca; color: #10131a; }
+    #stop { background: #343b49; color: white; }
+    #status { margin-top: 16px; padding: 12px; border-radius: 10px;
+              background: #10131a; overflow-wrap: anywhere; }
+    audio { width: 100%; margin-top: 12px; }
+    .small { font-size: .85rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>LAN Audio</h1>
+  <p>Listen to the host computer's system audio. Connect your phone's Bluetooth
+     earbuds first, then tap Start listening.</p>
+  <button id="start">Start listening</button>
+  <button id="stop" disabled>Stop</button>
+  <div id="status" role="status">Not connected</div>
+  <audio id="audio" autoplay playsinline controls></audio>
+  <p class="small">This page does not request microphone access. Keep the phone
+     and host on the same Wi-Fi network.</p>
+</main>
+<script>
+const startButton = document.querySelector("#start");
+const stopButton = document.querySelector("#stop");
+const statusBox = document.querySelector("#status");
+const audio = document.querySelector("#audio");
+
+let ws = null;
+let pc = null;
+
+function status(text) { statusBox.textContent = text; }
+
+function waitForIceGatheringComplete(peer) {
+  if (peer.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise(resolve => {
+    function check() {
+      if (peer.iceGatheringState === "complete") {
+        peer.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    }
+    peer.addEventListener("icegatheringstatechange", check);
+    check();
+  });
+}
+
+async function start() {
+  startButton.disabled = true;
+  status("Connecting…");
+
+  try {
+    pc = new RTCPeerConnection({
+      iceServers: [] // LAN-only: no STUN/TURN server required on a shared LAN.
+    });
+
+    pc.addTransceiver("audio", { direction: "recvonly" });
+
+    pc.ontrack = async event => {
+      audio.srcObject = event.streams[0];
+      try {
+        await audio.play();
+        status("Connected — receiving system audio");
+      } catch {
+        status("Connected. Tap Play on the audio player if playback is blocked.");
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc && pc.connectionState === "failed") status("Connection failed. Try reconnecting.");
+      if (pc && pc.connectionState === "disconnected") status("Connection interrupted.");
+    };
+
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${scheme}//${location.host}/ws`);
+
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = () => reject(new Error("Could not reach the host server."));
+      ws.onmessage = async event => {
+        const message = JSON.parse(event.data);
+        if (message.type === "error") {
+          status(message.message);
+          return;
+        }
+        if (message.type === "answer") {
+          await pc.setRemoteDescription({ type: "answer", sdp: message.sdp });
+          status("Negotiating audio connection…");
+        }
+      };
+      ws.onclose = () => {
+        if (pc && pc.connectionState !== "connected") {
+          status("Server connection closed.");
+        }
+      };
+    });
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+    ws.send(JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp }));
+    stopButton.disabled = false;
+  } catch (error) {
+    status(error.message || "Could not start audio.");
+    cleanup();
+  }
+}
+
+function cleanup() {
+  if (ws) { ws.close(); ws = null; }
+  if (pc) { pc.close(); pc = null; }
+  audio.pause();
+  audio.srcObject = null;
+  startButton.disabled = false;
+  stopButton.disabled = true;
+}
+
+startButton.addEventListener("click", start);
+stopButton.addEventListener("click", () => {
+  cleanup();
+  status("Stopped");
+});
+</script>
+</body>
+</html>

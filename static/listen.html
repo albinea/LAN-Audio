@@ -1,0 +1,335 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LAN Audio</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #10131a;
+      color: #f2f4f8;
+    }
+
+    main {
+      width: min(90vw, 430px);
+      padding: 24px;
+      border: 1px solid #343b49;
+      border-radius: 20px;
+      background: #191e28;
+    }
+
+    h1 { margin-top: 0; }
+
+    p {
+      color: #bdc5d4;
+      line-height: 1.5;
+    }
+
+    button {
+      width: 100%;
+      padding: 15px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #toggle {
+      background: #8bd5ca;
+      color: #10131a;
+    }
+
+    #toggle:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    #status {
+      margin-top: 18px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #10131a;
+      overflow-wrap: anywhere;
+    }
+
+    .small { font-size: 0.85rem; }
+  </style>
+</head>
+
+<body>
+<main>
+  <h1>LAN Audio</h1>
+
+  <p>
+    Connect your Bluetooth earbuds and listen to the live stereo
+    audio from the host laptop.
+  </p>
+
+  <button id="toggle">Start listening</button>
+
+  <div id="status" role="status" aria-live="polite">
+    Ready to connect
+  </div>
+
+  <p class="small">
+    Pausing disconnects the audio stream. Resuming reconnects to live audio
+    instead of intentionally replaying the paused stream.
+  </p>
+</main>
+
+<script>
+const toggleButton = document.querySelector("#toggle");
+const statusBox = document.querySelector("#status");
+
+let ws = null;
+let pc = null;
+let audio = null;
+
+let generation = 0;
+let mode = "paused";
+
+function setStatus(message) {
+  statusBox.textContent = message;
+}
+
+function waitForIceComplete(peer) {
+  if (peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+
+  return new Promise(resolve => {
+    const check = () => {
+      if (peer.iceGatheringState === "complete") {
+        peer.removeEventListener(
+          "icegatheringstatechange", check
+        );
+        resolve();
+      }
+    };
+
+    peer.addEventListener("icegatheringstatechange", check);
+    check();
+  });
+}
+
+function closeSession() {
+  // Invalidate callbacks from any previous connection.
+  generation++;
+
+  if (ws) {
+    const oldWs = ws;
+    ws = null;
+    oldWs.onmessage = null;
+    oldWs.onclose = null;
+    oldWs.onerror = null;
+    oldWs.close();
+  }
+
+  if (pc) {
+    const oldPc = pc;
+    pc = null;
+    oldPc.ontrack = null;
+    oldPc.onconnectionstatechange = null;
+    oldPc.close();
+  }
+
+  if (audio) {
+    audio.pause();
+    audio.srcObject = null;
+    audio = null;
+  }
+}
+
+async function connectLive() {
+  closeSession();
+  const myGeneration = generation;
+
+  mode = "connecting";
+  toggleButton.disabled = true;
+  toggleButton.textContent = "Connecting…";
+  setStatus("Connecting to live audio…");
+
+  try {
+    const peer = new RTCPeerConnection({
+      iceServers: []
+    });
+
+    pc = peer;
+
+    const player = new Audio();
+    player.autoplay = true;
+    player.playsInline = true;
+    player.preload = "none";
+    audio = player;
+
+    // Receive audio only. Never request microphone access.
+    const transceiver = pc.addTransceiver("audio", {
+    direction: "recvonly"
+});
+
+const receiver = transceiver.receiver;
+
+if ("jitterBufferTarget" in receiver) {
+    receiver.jitterBufferTarget = 40;
+}
+
+    peer.ontrack = async event => {
+      if (myGeneration !== generation || pc !== peer) return;
+
+      player.srcObject =
+        event.streams[0] ||
+        new MediaStream([event.track]);
+
+      try {
+        await player.play();
+
+        if (myGeneration !== generation || pc !== peer) return;
+
+        mode = "playing";
+        toggleButton.disabled = false;
+        toggleButton.textContent = "Pause";
+        setStatus("Live audio connected");
+      } catch (error) {
+        if (myGeneration !== generation || pc !== peer) return;
+
+        mode = "ready";
+        toggleButton.disabled = false;
+        toggleButton.textContent = "Tap to play";
+        setStatus("Audio received. Tap the button to start playback.");
+      }
+    };
+
+    peer.onconnectionstatechange = () => {
+      if (myGeneration !== generation || pc !== peer) return;
+
+      if (peer.connectionState === "failed") {
+        closeSession();
+        mode = "paused";
+        toggleButton.disabled = false;
+        toggleButton.textContent = "Reconnect";
+        setStatus("Connection failed. Tap Reconnect.");
+      }
+    };
+
+    const scheme =
+      location.protocol === "https:" ? "wss:" : "ws:";
+
+    const socket = new WebSocket(
+      `${scheme}//${location.host}/ws`
+    );
+
+    ws = socket;
+
+    // Prepare the answer listener before sending the offer.
+    const answerPromise = new Promise((resolve, reject) => {
+      socket.onmessage = event => {
+        if (myGeneration !== generation) return;
+
+        let message;
+
+        try {
+          message = JSON.parse(event.data);
+        } catch {
+          reject(new Error("Invalid server response."));
+          return;
+        }
+
+        if (message.type === "error") {
+          reject(new Error(message.message));
+        } else if (message.type === "answer") {
+          resolve(message);
+        }
+      };
+
+      socket.onerror = () => {
+        reject(new Error("Cannot reach the audio server."));
+      };
+
+      socket.onclose = () => {
+        if (myGeneration === generation && mode === "playing") {
+          closeSession();
+          mode = "paused";
+          toggleButton.disabled = false;
+          toggleButton.textContent = "Reconnect";
+          setStatus("Server disconnected.");
+        }
+      };
+    });
+
+    await new Promise((resolve, reject) => {
+      socket.onopen = resolve;
+
+      const previousError = socket.onerror;
+      socket.onerror = event => {
+        if (previousError) previousError(event);
+        reject(new Error("Could not connect to the host."));
+      };
+    });
+
+    if (myGeneration !== generation) return;
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await waitForIceComplete(peer);
+
+    if (myGeneration !== generation) return;
+
+    socket.send(JSON.stringify({
+      type: "offer",
+      sdp: peer.localDescription.sdp
+    }));
+
+    const answer = await answerPromise;
+
+    if (myGeneration !== generation) return;
+
+    await peer.setRemoteDescription({
+      type: "answer",
+      sdp: answer.sdp
+    });
+
+  } catch (error) {
+    if (myGeneration !== generation) return;
+
+    closeSession();
+    mode = "paused";
+    toggleButton.disabled = false;
+    toggleButton.textContent = "Reconnect";
+    setStatus(error.message || "Unable to connect.");
+  }
+}
+
+function pauseListening() {
+  closeSession();
+
+  mode = "paused";
+  toggleButton.disabled = false;
+  toggleButton.textContent = "Resume live audio";
+  setStatus("Paused. Resume to reconnect at the live edge.");
+}
+
+toggleButton.addEventListener("click", () => {
+  if (mode === "playing" || mode === "connecting" || mode === "ready") {
+    pauseListening();
+  } else {
+    connectLive();
+  }
+});
+</script>
+</body>
+</html>
