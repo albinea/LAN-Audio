@@ -32,13 +32,13 @@ The signalling connection and media stream serve different purposes: WebSocket s
 
 The host dashboard displays a QR code that listeners can scan to open the LAN Audio listening page. It also shows the number of connected listeners, allowing the host to monitor active connections at a glance.
 
-![LAN Audio host dashboard displaying the QR code and connected listeners](docs/screenshots/dashboard.png)
+![LAN Audio host dashboard displaying the QR code and connected listeners](docs/dashboard.png)
 
 ### 2. Phone Listener Interface
 
 The listener interface allows users to connect their phones to the live audio stream and listen through their own wired or Bluetooth headphones. The Pause button disconnects the audio stream, while resuming reconnects to the live audio instead of replaying previously buffered audio.
 
-![LAN Audio mobile listener interface showing an active audio connection](docs/screenshots/listener.png)
+![LAN Audio mobile listener interface showing an active audio connection](docs/listener.png)
 
 ## Current features
 
