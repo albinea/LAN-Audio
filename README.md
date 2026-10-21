@@ -108,15 +108,6 @@ These instructions describe the expected workflow; update filenames or commands 
 - Real-world latency and multi-listener capacity need to be measured rather than assumed.
 - WebRTC connectivity can depend on firewall and network configuration.
 
-## Roadmap
-
-- [ ] Add the current prototype source code and a pinned dependency list.
-- [ ] Add configuration for selecting the audio monitor source.
-- [ ] Improve connection, error, and listener status indicators.
-- [ ] Measure end-to-end latency and behavior with multiple listeners.
-- [ ] Document installation and troubleshooting against a clean Linux setup.
-- [ ] Explore an Android-native host using Android's playback-capture APIs and native WebRTC.
-
 ## Contributing
 
 Issues and pull requests are welcome. Please include your operating system, browser, audio server, and relevant logs when reporting a problem. Do not include private data or access tokens in logs.
