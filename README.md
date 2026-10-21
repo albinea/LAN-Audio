@@ -2,8 +2,7 @@
 
 **Stream your computer's audio to multiple phones on the same local network.** Each listener can use their own wired or Bluetooth headphones.
 
-LAN Audio started from a simple problem: while watching a film with a friend, sharing one pair of earbuds was awkward. The goal is to let everyone listen from their own device without needing a special multi-headphone Bluetooth setup.
-
+LAN Audio was inspired by a moment while watching Kandukondain Kandukondain with a friend. When she returned my earbud so I could hear the movie better, it got me thinking: what if we could both listen to the same audio, each using our own earbuds? That idea led to LAN Audio, a way to stream a laptop’s system audio to phones over a local network.
 > **Project status:** Prototype / in development. The current implementation is a laptop-hosted web app. An Android-native host is a possible future direction, not part of the current implementation.
 
 ## How it works
