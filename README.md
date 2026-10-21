@@ -1,85 +1,126 @@
-# LAN Audio (Ubuntu -> Android browser)
+# LAN Audio
 
-A minimal local-network prototype that captures a PulseAudio-compatible **output monitor**
-and streams it to up to three Android browser clients using WebRTC.
+**Stream your computer's audio to multiple phones on the same local network.** Each listener can use their own wired or Bluetooth headphones.
 
-## 1. Install system dependencies
+LAN Audio started from a simple problem: while watching a film with a friend, sharing one pair of earbuds was awkward. The goal is to let everyone listen from their own device without needing a special multi-headphone Bluetooth setup.
 
-On Ubuntu:
+> **Project status:** Prototype / in development. The current implementation is a laptop-hosted web app. An Android-native host is a possible future direction, not part of the current implementation.
 
-```bash
-sudo apt update
-sudo apt install -y python3-venv python3-pip ffmpeg pulseaudio-utils
+## How it works
+
+1. The host computer captures its system audio through the OS audio monitor source.
+2. A Python server provides a host dashboard and WebRTC signalling.
+3. A listener opens the provided link on a phone and joins the session.
+4. WebRTC carries the real-time audio stream to the listener, where the phone plays it through its selected output device.
+
+```mermaid
+flowchart LR
+    A[Computer system audio] --> B[PulseAudio / PipeWire monitor]
+    B --> C[FFmpeg PCM capture]
+    C --> D[Python server and audio track]
+    D <-->|WebSocket signalling| E[Phone browser]
+    D <-->|WebRTC media, usually UDP| E
+    E --> F[Phone audio output]
+    F --> G[Wired or Bluetooth headphones]
 ```
 
-PipeWire users normally have a PulseAudio-compatible server. Check:
+The signalling connection and media stream serve different purposes: WebSocket signalling exchanges connection information, while WebRTC transports the live audio. WebRTC commonly uses UDP when network conditions allow; the actual selected transport depends on ICE negotiation.
 
-```bash
-pactl info
-pactl list short sources
-```
+## Current features
 
-Find the source corresponding to the laptop's output device. It usually ends in
-`.monitor`, for example `alsa_output.pci-0000_00_1f.3.analog-stereo.monitor`.
-**Do not choose a source named `alsa_input...` or one corresponding to a microphone.**
+- Capture desktop audio on Linux using a PulseAudio-compatible monitor source (including PipeWire's PulseAudio compatibility layer).
+- Browser-based host and listener interfaces.
+- WebRTC audio delivery to connected listeners.
+- QR-code-based joining in the host dashboard, if enabled in the current UI.
+- Designed for a local network; no cloud audio relay is required for a same-LAN session.
 
-If the source list has no monitor source, first check that the output device is playing audio
-and that PipeWire/PulseAudio is running.
+Features and behavior may vary as the prototype develops. Verify them against the current code before treating them as production-ready.
 
-## 2. Create the Python environment
+## Architecture and technology
 
-From this directory:
+- **Python / FastAPI** — web server and signalling endpoints.
+- **FFmpeg** — captures and converts the selected system-audio monitor source to PCM.
+- **aiortc / WebRTC** — audio tracks and browser media connections.
+- **WebSockets** — signalling between the browser clients and the server.
+- **HTML / JavaScript** — host and listener pages.
+- **PulseAudio-compatible audio interface** — access to the Linux system-audio monitor.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
+## Requirements
 
-## 3. Set the output monitor and run
+- Linux host with a working PulseAudio-compatible audio server (PulseAudio or PipeWire with its PulseAudio compatibility service).
+- Python 3.10+ recommended.
+- FFmpeg built with PulseAudio input support.
+- A modern browser on the host and listener devices.
+- Host and listener devices on the same Wi-Fi/LAN, with firewall rules allowing the required local connections.
 
-Copy the exact monitor source name from `pactl list short sources`:
+Bluetooth audio output adds latency of its own, so the host-to-phone network latency is only part of the overall delay.
 
-```bash
-export AUDIO_SOURCE='PASTE_YOUR_OUTPUT_MONITOR_SOURCE_HERE'
-export MAX_CLIENTS=3
-python app.py
-```
+## Run locally
 
-The audio capture runs as the logged-in desktop user, so run this from the same Ubuntu user
-session that owns the audio server; avoid `sudo`.
+These instructions describe the expected workflow; update filenames or commands if the current source tree differs.
 
-## 4. Connect Android phones
+1. Install FFmpeg and verify that the system audio monitor source is available:
 
-1. Put the host and phones on the same Wi-Fi network. Guest Wi-Fi or AP/client isolation must
-   be disabled.
-2. Find the laptop's LAN IPv4 address, for example with `hostname -I`.
-3. On each phone, open `http://LAPTOP_IP:8000`.
-4. Pair each phone with its Bluetooth earbuds.
-5. Tap **Start listening** and press Play if the browser requires it.
+   ```bash
+   pactl list short sources
+   ```
 
-For example, if the host IP is `192.168.1.20`, open `http://192.168.1.20:8000`.
+   Look for a source ending in `.monitor`.
 
-## Troubleshooting
+2. Clone the repository and create a virtual environment:
 
-- **No audio:** verify the chosen source is the output `.monitor`, and play sound on the laptop.
-- **Server errors at startup:** verify `AUDIO_SOURCE` is set and `pactl info` works as the same user.
-- **Phone cannot connect:** verify both devices are on the same Wi-Fi, disable client isolation, and
-  allow TCP port 8000 in the host firewall if enabled.
-- **Connection connects but audio does not play:** tap Play on the page's audio control and check
-  Android media volume / Bluetooth output.
-- **Audio cuts out or latency is too high:** test with one phone first, keep the Wi-Fi signal strong,
-  and close other heavy network/audio workloads.
+   ```bash
+   git clone https://github.com/albinea/LAN-Audio.git
+   cd LAN-Audio
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
 
-## Notes / limitations
+3. Install the Python dependencies. If the repository contains a dependency file, use it:
 
-- This prototype uses a separate WebRTC peer connection for each listener and no external STUN/TURN
-  servers. It is intended for clients on the same LAN.
-- The web page never calls `getUserMedia`, so it does not request microphone access.
-- A monitor source captures the system output sent to that audio sink. If the laptop switches
-  output devices, select the corresponding monitor source and restart the server.
-- Browser, operating-system and Bluetooth buffering vary, so exact synchronization across phones
-  is not guaranteed. Bluetooth itself adds latency.
-- This starter is not hardened for untrusted networks. Anyone able to reach the host and its port
-  can try to listen; use only a trusted network until room authentication is added.
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure the audio source to match your machine. For example, a source name may look like:
+
+   ```text
+   alsa_output.pci-0000_05_00.6.analog-stereo.monitor
+   ```
+
+   This is only an example; use the monitor source returned by your own system.
+
+5. Start the FastAPI application using the entry point and command defined by the project. For example, if the module is `app.py` and the ASGI app is named `app`:
+
+   ```bash
+   uvicorn app:app --host 0.0.0.0 --port 8000
+   ```
+
+6. Open the host dashboard on the host computer, then open its LAN address on the listener phone. Use the app's displayed listener URL or QR code if available.
+
+**Note:** The repository is currently being initialized. This README is a project overview and setup outline; exact run commands, dependency files, firewall ports, and UI features should be aligned with the source code as it is added.
+
+## Limitations
+
+- The current host captures Linux system audio; it is not yet a universal cross-platform host.
+- Some apps and protected content may restrict system-audio capture on certain operating systems.
+- Bluetooth headphones can introduce noticeable delay.
+- Real-world latency and multi-listener capacity need to be measured rather than assumed.
+- WebRTC connectivity can depend on firewall and network configuration.
+
+## Roadmap
+
+- [ ] Add the current prototype source code and a pinned dependency list.
+- [ ] Add configuration for selecting the audio monitor source.
+- [ ] Improve connection, error, and listener status indicators.
+- [ ] Measure end-to-end latency and behavior with multiple listeners.
+- [ ] Document installation and troubleshooting against a clean Linux setup.
+- [ ] Explore an Android-native host using Android's playback-capture APIs and native WebRTC.
+
+## Contributing
+
+Issues and pull requests are welcome. Please include your operating system, browser, audio server, and relevant logs when reporting a problem. Do not include private data or access tokens in logs.
+
+## License
+
+No license has been added yet. Until a license is included, the repository's default copyright applies and reuse rights should not be assumed.
